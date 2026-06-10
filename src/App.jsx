@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 
 const API = '/api/entries';
+const DAILY_GOAL = 20; // target entries per type, per day
 
 export default function App() {
   const [entries, setEntries] = useState([]);
@@ -120,6 +121,20 @@ export default function App() {
     return { artists, influencers, total: entries.length };
   }, [entries]);
 
+  // Entries added "today" (by local calendar date), split by type.
+  const today = useMemo(() => {
+    const todayStr = new Date().toDateString();
+    let artist = 0;
+    let influencer = 0;
+    for (const e of entries) {
+      if (new Date(e.createdAt).toDateString() === todayStr) {
+        if (e.type === 'artist') artist += 1;
+        else if (e.type === 'influencer') influencer += 1;
+      }
+    }
+    return { artist, influencer };
+  }, [entries]);
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return entries.filter((e) => {
@@ -172,10 +187,16 @@ export default function App() {
               <p>Artist &amp; Influencer username collector</p>
             </div>
           </div>
-          <button className="btn btn-ghost export-btn" onClick={exportCsv}>
-            <DownloadIcon />
-            <span>Export CSV</span>
-          </button>
+          <div className="header-right">
+            <div className="daily-mini" title="Usernames added today">
+              <MiniProgress label="Artists" count={today.artist} goal={DAILY_GOAL} tone="pink" />
+              <MiniProgress label="Influencers" count={today.influencer} goal={DAILY_GOAL} tone="blue" />
+            </div>
+            <button className="btn btn-ghost export-btn" onClick={exportCsv}>
+              <DownloadIcon />
+              <span>Export CSV</span>
+            </button>
+          </div>
         </header>
 
         {/* Stats */}
@@ -310,6 +331,30 @@ function Field({ label, placeholder, value, onChange, onKeyDown, onAdd, busy, to
           {busy ? <Spinner /> : <PlusIcon />}
           <span>Add</span>
         </button>
+      </div>
+    </div>
+  );
+}
+
+function MiniProgress({ label, count, goal, tone }) {
+  const pct = Math.min(100, Math.round((count / goal) * 100));
+  const done = count >= goal;
+  return (
+    <div className={`mini tone-${tone} ${done ? 'is-done' : ''}`}>
+      <div className="mini-top">
+        <span className="mini-label">{label} today</span>
+        <span className="mini-count">
+          {count}
+          <span className="mini-goal">/{goal}</span>
+          {done && (
+            <span className="mini-check">
+              <CheckIcon />
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="mini-track">
+        <div className="mini-bar" style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
