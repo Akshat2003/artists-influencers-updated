@@ -14,12 +14,13 @@ function devApi(env) {
         if (process.env[k] === undefined) process.env[k] = v;
       }
 
-      server.middlewares.use('/api/entries', async (req, res) => {
+      // Build a middleware that runs a serverless handler module with minimal
+      // Vercel-style req/res shims. Imported fresh so edits are picked up.
+      const route = (modulePath) => async (req, res) => {
         try {
           const url = new URL(req.url, 'http://localhost');
           const query = Object.fromEntries(url.searchParams.entries());
 
-          // Collect the request body.
           let body = {};
           if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
             const chunks = [];
@@ -28,7 +29,6 @@ function devApi(env) {
             body = raw ? JSON.parse(raw) : {};
           }
 
-          // Minimal Vercel-style req/res shims.
           const vReq = { method: req.method, query, body, headers: req.headers };
           const vRes = {
             statusCode: 200,
@@ -47,8 +47,7 @@ function devApi(env) {
             },
           };
 
-          // Import fresh so edits to the handler are picked up.
-          const mod = await server.ssrLoadModule('/api/entries.js');
+          const mod = await server.ssrLoadModule(modulePath);
           await mod.default(vReq, vRes);
         } catch (err) {
           // eslint-disable-next-line no-console
@@ -57,7 +56,12 @@ function devApi(env) {
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'Dev API error. Check the terminal.' }));
         }
-      });
+      };
+
+      server.middlewares.use('/api/entries', route('/api/entries.js'));
+      server.middlewares.use('/api/enrich', route('/api/enrich.js'));
+      server.middlewares.use('/api/auth', route('/api/auth.js'));
+      server.middlewares.use('/api/users', route('/api/users.js'));
     },
   };
 }

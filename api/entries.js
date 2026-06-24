@@ -1,5 +1,14 @@
 import { ObjectId } from 'mongodb';
 import { getDb } from './_db.js';
+import { fetchBusinessDiscovery, computeMetrics, inferCategory } from './_ig.js';
+import { getSessionUser, ensureSeedAdmin, can } from './_auth.js';
+
+// Fields returned to users WITHOUT the view_metrics permission — enough for the
+// add form, client-side dedup, and the daily tier counters; no enriched data.
+const MINIMAL_PROJECTION = {
+  username: 1, usernameLower: 1, type: 1, createdAt: 1,
+  enrichStatus: 1, 'metrics.followerTier': 1,
+};
 
 const VALID_TYPES = ['artist', 'influencer'];
 
@@ -8,6 +17,43 @@ function cleanUsername(raw) {
     .trim()
     .replace(/^@+/, '') // drop leading @ symbols
     .trim();
+}
+
+// Fetch the Instagram profile and compute the enrichment fields for an entry.
+// Always resolves (never throws); the returned $set object reflects the outcome
+// via enrichStatus. Exported so the /api/enrich backfill endpoint can reuse it.
+export async function buildEnrichment(username, type) {
+  const result = await fetchBusinessDiscovery(username);
+  const now = new Date().toISOString();
+
+  if (result.status === 'ok') {
+    const metrics = computeMetrics(result.raw);
+    const inferred = inferCategory(result.raw, metrics, type);
+    return {
+      enrichStatus: 'ok',
+      enrichedAt: now,
+      enrichError: null,
+      raw: result.raw,
+      metrics,
+      inferredType: inferred.inferredType,
+      categoryMismatch: inferred.categoryMismatch,
+      inferReason: inferred.inferReason,
+      inferScore: inferred.inferScore,
+    };
+  }
+
+  // not ok -> store status + error, no metrics; clear any stale enrichment
+  return {
+    enrichStatus: result.status, // 'pending' | 'undiscoverable' | 'error'
+    enrichedAt: result.status === 'undiscoverable' ? now : null,
+    enrichError: result.error,
+    raw: null,
+    metrics: null,
+    inferredType: null,
+    categoryMismatch: false,
+    inferReason: null,
+    inferScore: null,
+  };
 }
 
 export default async function handler(req, res) {
@@ -21,15 +67,23 @@ export default async function handler(req, res) {
 
   const col = db.collection('entries');
 
+  // ---- authentication ----
+  await ensureSeedAdmin(db);
+  const me = await getSessionUser(req, db);
+  if (!me) return res.status(401).json({ error: 'Not signed in.' });
+
   try {
-    // ---- List all entries -------------------------------------------------
+    // ---- List entries (projection depends on view_metrics) ----------------
     if (req.method === 'GET') {
-      const entries = await col.find({}).sort({ createdAt: -1 }).toArray();
+      const full = can(me, 'view_metrics');
+      const cursor = col.find({}, full ? {} : { projection: MINIMAL_PROJECTION });
+      const entries = await cursor.sort({ createdAt: -1 }).toArray();
       return res.status(200).json({ entries });
     }
 
     // ---- Add a new entry --------------------------------------------------
     if (req.method === 'POST') {
+      if (!can(me, 'add_entries')) return res.status(403).json({ error: 'Not allowed to add entries.' });
       const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
       const username = cleanUsername(body.username);
       const type = String(body.type || '').toLowerCase();
@@ -53,11 +107,18 @@ export default async function handler(req, res) {
         });
       }
 
+      // Enrich synchronously from the Instagram Graph API. This never throws —
+      // on rate-limit/failure the entry is still saved (enrichStatus reflects it)
+      // and can be re-enriched later via /api/enrich.
+      const enrichment = await buildEnrichment(username, type);
+
       const doc = {
         username,
         usernameLower,
         type,
         createdAt: new Date().toISOString(),
+        enrichAttempts: 1,
+        ...enrichment,
       };
 
       try {
@@ -78,6 +139,7 @@ export default async function handler(req, res) {
 
     // ---- Delete an entry --------------------------------------------------
     if (req.method === 'DELETE') {
+      if (!can(me, 'delete_entries')) return res.status(403).json({ error: 'Not allowed to delete entries.' });
       const id = req.query?.id;
       if (!id || !ObjectId.isValid(id)) {
         return res.status(400).json({ error: 'A valid entry id is required.' });

@@ -57,7 +57,7 @@ npm install
 Create a `.env` file (copy from `.env.example`) with your connection string:
 
 ```
-MONGODB_URI=mongodb+srv://underdawg:underdawg@underdawg.eed5lyh.mongodb.net/?retryWrites=true&w=majority
+MONGODB_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/?retryWrites=true&w=majority
 MONGODB_DB=underdawg
 ```
 
@@ -102,9 +102,16 @@ vercel dev                 # runs UI + /api together at http://localhost:3000
 
 ## Security note
 
-The connection string you shared is now in `.env.example` for convenience, but
-`.env` is git-ignored. **Anyone with this string has full read/write/delete access
-to your database.** Since it has already been shared in plain text, consider
-rotating the password in MongoDB Atlas (Database Access → Edit user) and updating
-`MONGODB_URI` in Vercel afterwards.
-```
+`.env.example` and this README now use **placeholders only** — never commit a real
+connection string or access token. `.env` is git-ignored; keep real secrets there
+locally and in the Vercel dashboard (Settings → Environment Variables).
+
+> ⚠️ A real MongoDB connection string was previously committed in `.env.example`
+> (now scrubbed). Scrubbing the file does **not** remove it from git history, and
+> **anyone with that string has full read/write/delete access to the database.**
+> You should:
+> 1. **Rotate the MongoDB password** in Atlas (Database Access → Edit user) and
+>    update `MONGODB_URI` locally + in Vercel.
+> 2. Treat the previously-committed `IG_TOKEN`, if any, the same way (rotate it).
+> 3. Optionally purge the secret from git history (e.g. `git filter-repo`) before
+>    sharing the repo.

@@ -22,9 +22,12 @@ export async function getDb() {
   // even under concurrent requests. Runs once per warm instance.
   if (!cached.indexed) {
     try {
-      await cached.conn
-        .collection('entries')
-        .createIndex({ usernameLower: 1 }, { unique: true });
+      const entries = cached.conn.collection('entries');
+      await entries.createIndex({ usernameLower: 1 }, { unique: true });
+      // Non-unique index to keep the enrichment backfill query cheap.
+      await entries.createIndex({ enrichStatus: 1 });
+      // Unique usernames for auth accounts.
+      await cached.conn.collection('users').createIndex({ usernameLower: 1 }, { unique: true });
       cached.indexed = true;
     } catch {
       // Index creation is best-effort; the code-level check still applies.
